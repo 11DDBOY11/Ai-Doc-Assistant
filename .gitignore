@@ -1,0 +1,50 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+eggs/
+*.manifest
+*.spec
+
+# Virtual Environments
+venv/
+env/
+.venv/
+ENV/
+
+# Environment / Secrets
+.env
+*.env.local
+
+# Database (SQLite runtime file - not committed)
+app/assistant.db
+app/*.db
+*.db-journal
+
+# Docker volumes / data
+app/data/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Pytest / coverage
+.pytest_cache/
+htmlcov/
+.coverage
+coverage.xml
+
+# Logs
+*.log
