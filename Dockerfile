@@ -12,10 +12,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application source and assets
-COPY app/         ./app/
-COPY sample_docs/ ./sample_docs/
-COPY tests/       ./tests/
+# Copy application source, compiled frontend, and assets
+COPY app/           ./app/
+COPY sample_docs/   ./sample_docs/
+COPY tests/         ./tests/
+COPY frontend/dist/ ./frontend/dist/
 
 EXPOSE 8000
 

@@ -19,6 +19,8 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Header, Request, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 # Ensure app directory is in Python path
@@ -98,12 +100,23 @@ class TextUploadRequest(BaseModel):
     content: str = Field(..., min_length=1, description="Raw text content of the document.")
 
 
+# Resolve frontend dist path
+FRONTEND_DIST = os.path.abspath(os.path.join(os.path.dirname(os.path.dirname(__file__)), "frontend", "dist"))
+if os.path.exists(FRONTEND_DIST) and os.path.exists(os.path.join(FRONTEND_DIST, "assets")):
+    app.mount("/assets", StaticFiles(directory=os.path.join(FRONTEND_DIST, "assets")), name="assets")
+
+
 @app.get("/", tags=["General"])
-def root():
+def root(request: Request):
+    index_file = os.path.join(FRONTEND_DIST, "index.html")
+    if os.path.exists(index_file) and "text/html" in request.headers.get("accept", ""):
+        return FileResponse(index_file)
+
     return {
         "project": "AI Document Assistant",
         "author": "Darshan Dashyal",
         "features": [
+            "React Minimalist UI",
             "Precomputed Hybrid TF-IDF + BM25 Caching",
             "Incremental Vector Indexing",
             "Groq API LPU Inference with Grounding Guardrails",

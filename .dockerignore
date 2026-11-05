@@ -36,3 +36,4 @@ coverage.xml
 
 # Documentation markdown files not needed in container image
 *.md
+
