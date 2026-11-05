@@ -1,0 +1,16 @@
+version: '3.8'
+
+services:
+  ai-doc-assistant:
+    build: .
+    container_name: ai_document_assistant
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./app/data:/app/app/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
