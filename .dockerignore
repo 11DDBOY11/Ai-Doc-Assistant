@@ -1,0 +1,38 @@
+# Python caches and virtual environments
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+dist/
+build/
+venv/
+env/
+.venv/
+
+# Environment files and credentials
+.env
+*.env.local
+
+# Runtime databases
+app/assistant.db
+app/*.db
+*.db-journal
+
+# Version control
+.git/
+.gitignore
+
+# IDE and OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Test and coverage artifacts
+.pytest_cache/
+htmlcov/
+.coverage
+coverage.xml
+
+# Documentation markdown files not needed in container image
+*.md

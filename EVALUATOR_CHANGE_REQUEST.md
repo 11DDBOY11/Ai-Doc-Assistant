@@ -1,7 +1,7 @@
 # Day 8 Evaluator Change Request Log
 **Assessment Requirement:** Rubric Section 6 & 8  
 **Project:** P07 — AI Document Assistant  
-**Candidate:** Devaraj G (USN: 4AL24EC404)
+**Candidate:** Darshan Dashyal
 
 ---
 

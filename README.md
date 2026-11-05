@@ -1,17 +1,17 @@
 # P07 — AI Document Assistant & Grounded QA System
 **Internship Technical Talent Assessment — Thasmai Infotech**  
-**Candidate Name:** Devaraj G | **USN:** 4AL24EC404 | **Department:** Electronics & Communication Engineering
+**Candidate Name:** Darshan Dashyal | **Project:** AI Document Assistant (P07)
 
 ---
 
-## 1. Project Overview & Problem Statement
-The **AI Document Assistant** solves the critical problem of finding factual, grounded information across large technical documents, policies, and specifications. In typical LLM setups, users suffer from hallucinations and uncited claims. 
-
-This platform implements a **Retrieval-Augmented Generation (RAG)** architecture with:
+## 1. Project Overview & Architecture
+The **AI Document Assistant** implements a production-grade **Retrieval-Augmented Generation (RAG)** architecture designed for low-latency, deterministic, grounded question-answering across technical documents:
 - **Zero-Hallucination Guardrail:** Strict minimum confidence scoring; if relevant chunks do not exist, the system triggers a standard fallback rather than inventing unsupported answers.
 - **Hybrid Retrieval Engine:** Combines dense TF-IDF Cosine Vector Space Modeling (for semantic intent) with BM25 Okapi lexical scoring (for exact keyword/acronym matching).
+- **Precomputed Token Caching:** Document tokens, lengths, and term frequency counters are computed once at index time, keeping search execution sub-millisecond.
+- **Incremental Indexing:** Document uploads use `add_chunks()` to tokenize only incoming documents (O(new) cost) rather than running full O(N) table rescans.
 - **Sentence-Level Citation Tracking:** Every fact links back to its exact document title, section heading, and chunk index.
-- **Dynamic Evaluator Controls (Day 8 Modification):** Real-time threshold tuning, scope filtering, and session audit exporting.
+- **ACID Persistence:** SQLite with `PRAGMA journal_mode = WAL` and `PRAGMA foreign_keys = ON` for fast concurrent reads and automatic cascading deletions without N+1 query patterns.
 
 ---
 
