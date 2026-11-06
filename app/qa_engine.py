@@ -182,8 +182,10 @@ class QAEngine:
             return {
                 "query":            query,
                 "answer":           (
-                    "The provided documents do not contain sufficient information to answer this question.\n\n"
-                    "Strict Grounding Notice: Confidence score was below the required verification threshold."
+                    f"I searched through your indexed documents, but they do not contain sufficient information to answer your question regarding **\"{query}\"**.\n\n"
+                    "🛡️ **Strict Anti-Hallucination Guardrail Active:**\n"
+                    "To prevent misinformation or hallucinations, I only generate answers directly backed by verified citations from your uploaded files. "
+                    "If this topic is covered in another document, please try uploading it or selecting 'All Documents' in the scope selector."
                 ),
                 "status":           "NO_ANSWER_FOUND",
                 "engine_used":      "Deterministic Guardrail",
@@ -221,33 +223,54 @@ class QAEngine:
 
         # Deterministic Grounded Local Extractive Synthesizer
         q_tokens = set(self.vector_store.normalize_query_tokens(query))
+        from vector_store import is_overview_query
+        is_overview = is_overview_query(query)
         candidates: List[Dict[str, Any]] = []
+
+        DANGLING_ENDINGS = {"or", "and", "to", "for", "in", "with", "of", "by", "the", "a", "an", "is", "as", "at"}
 
         for rank, item in enumerate(retrieved):
             ch = item["chunk"]
             heading = ch.get("heading", "Relevant Section")
             doc_title = ch.get("doc_title", "Document")
             chunk_idx = ch.get("chunkIndex", ch.get("chunk_index", 0)) + 1
+            raw_content = ch.get("content", "")
 
-            # Extract distinct statements across lines and sentences
-            content_lines = [l.strip() for l in ch.get("content", "").split("\n") if l.strip()]
-            for line in content_lines:
-                # Remove markdown header syntax
-                line_no_header = re.sub(r'^#{1,6}\s*', '', line).strip()
-                # Split compound sentences if long, otherwise keep line
-                subparts = re.split(r'(?<=[.!?])\s+(?=[A-Z])', line_no_header)
+            # Normalize single newlines so sentences wrapped across lines remain intact
+            norm_content = re.sub(r'(?<!\n)\n(?!\n)', ' ', raw_content)
+            paragraphs = [p.strip() for p in norm_content.split("\n\n") if p.strip()]
+
+            for para in paragraphs:
+                para_no_header = re.sub(r'^#{1,6}\s*', '', para).strip()
+                subparts = re.split(r'(?<=[.!?])\s+(?=[A-Z])', para_no_header)
                 for part in subparts:
                     statement = re.sub(r'^[-*•\d+\.]\s*', '', part).strip()
-                    if len(statement) < 12:
+                    if len(statement) < 20 or not statement[0].isupper():
                         continue
 
-                    words = set(re.findall(r'\b[a-zA-Z0-9]{2,}\b', statement.lower()))
+                    st_lower = statement.lower()
+                    if "permission to reproduce" in st_lower or "all rights reserved" in st_lower:
+                        continue
+
+                    last_word = statement.rstrip('.!?').split()[-1].lower() if statement.split() else ""
+                    if last_word in DANGLING_ENDINGS:
+                        continue
+
+                    words = set(re.findall(r'\b[a-zA-Z0-9]{2,}\b', st_lower))
                     overlap = len(q_tokens & words)
                     h_words = set(re.findall(r'\b[a-zA-Z0-9]{2,}\b', heading.lower()))
                     h_overlap = len(q_tokens & h_words)
 
                     score = (overlap * 3.0) + (h_overlap * 1.5) + (item["score"] * 2.0) - (rank * 0.3)
-                    if overlap > 0 or h_overlap > 0:
+
+                    # Overview bonus: prioritize sentences defining primary architecture, goals, or proposals
+                    if is_overview:
+                        if any(marker in st_lower for marker in ["propose", "introduce", "presents", "we describe", "in this work", "architecture", "model", "transformer", "objective"]):
+                            score += 4.5
+                        if ch.get("chunk_index", 999) <= 3:
+                            score += 2.0
+
+                    if overlap > 0 or h_overlap > 0 or is_overview:
                         candidates.append({
                             "text": statement,
                             "heading": heading,
@@ -272,14 +295,28 @@ class QAEngine:
                     break
 
             primary = selected[0]
-            answer_parts = [primary["text"]]
+            doc_title = primary["doc_title"]
+            heading = primary["heading"]
+            chunk_idx = primary["chunk_idx"]
 
-            if len(selected) > 1:
-                answer_parts.append("\nKey Supporting Details:")
-                for item in selected[1:]:
-                    answer_parts.append(f"- {item['text']}")
+            # Option 3: Natural Conversational Chatbot Synthesis
+            answer_parts: List[str] = []
+            if is_overview:
+                answer_parts.append(f"Based on **{doc_title}** (*{heading}*), here is an overview of what this work presents:\n")
+                answer_parts.append(f"{primary['text']}\n")
+                if len(selected) > 1:
+                    answer_parts.append("**Key Supporting Details & Findings:**")
+                    for item in selected[1:]:
+                        answer_parts.append(f"• {item['text']}")
+            else:
+                answer_parts.append(f"According to **{doc_title}** (*{heading}*):\n")
+                answer_parts.append(f"{primary['text']}\n")
+                if len(selected) > 1:
+                    answer_parts.append("**Key Supporting Details:**")
+                    for item in selected[1:]:
+                        answer_parts.append(f"• {item['text']}")
 
-            answer_parts.append(f"\n\n[Source: {primary['doc_title']} | Section: {primary['heading']} (Chunk #{primary['chunk_idx']})]")
+            answer_parts.append(f"\n[Source: {doc_title} | Section: {heading} (Chunk #{chunk_idx})]")
             answer = "\n".join(answer_parts)
             confidence = min(CONF_LOCAL_MAX, max(CONF_LOCAL_MIN, retrieved[0]["score"] * CONF_LOCAL_SCALE))
         else:
@@ -288,7 +325,11 @@ class QAEngine:
             chunk_idx = top_chunk.get("chunkIndex", top_chunk.get("chunk_index", 0)) + 1
             heading = top_chunk.get("heading", "Relevant Section")
             clean_body = re.sub(r'^#{1,6}\s*', '', top_chunk.get("content", "").strip())
-            answer = f"{clean_body[:300]}...\n\n[Source: {doc_title} | Section: {heading} (Chunk #{chunk_idx})]"
+            answer = (
+                f"According to **{doc_title}** (*{heading}*):\n\n"
+                f"{clean_body[:300]}...\n\n"
+                f"[Source: {doc_title} | Section: {heading} (Chunk #{chunk_idx})]"
+            )
             confidence = CONF_LOCAL_MIN
 
         latency_ms = round((time.time() - start_time) * 1000, 2)

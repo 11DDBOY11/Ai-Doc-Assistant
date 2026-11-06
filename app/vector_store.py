@@ -54,7 +54,33 @@ SYNONYM_MAP: Dict[str, str] = {
     "rubrik": "rubric",
     "arch": "architecture",
     "db": "database",
+    "whta": "what",
+    "waht": "what",
+    "whch": "which",
+    "wich": "which",
+    "abt": "about",
+    "desc": "description",
+    "summ": "summary",
 }
+
+OVERVIEW_QUERY_PATTERN = re.compile(
+    r'\b(about|overview|summary|summarize|purpose|goal|topic|main\s+idea|main\s+topic|objective|propose|introduce|what\s+is|what\s+does)\b',
+    re.IGNORECASE
+)
+META_DOC_NOUNS_PATTERN = re.compile(
+    r'\b(paper|document|doc|pdf|article|file|text|work|project|guide)\b',
+    re.IGNORECASE
+)
+
+OVERVIEW_ANCHOR_TERMS = [
+    "abstract", "propose", "introduction", "overview", "summary", "architecture", "model", "objective", "transformer"
+]
+
+
+def is_overview_query(query: str) -> bool:
+    """Check if query is asking for a document-level summary, overview, or main purpose."""
+    return bool(OVERVIEW_QUERY_PATTERN.search(query) and META_DOC_NOUNS_PATTERN.search(query))
+
 
 
 def _edit_distance(s1: str, s2: str, max_dist: int = 2) -> int:
@@ -141,10 +167,10 @@ class HybridVectorStore:
             if matched_variant:
                 continue
 
-            # Check fuzzy match against vocabulary if token length >= 5
+            # Check fuzzy match against vocabulary if token length >= 4
             best_match: Optional[str] = None
             min_dist = 999
-            max_allowed = 1 if len(mapped) < 8 else 2
+            max_allowed = 1 if len(mapped) < 7 else 2
 
             for vocab_word in self.vocabulary:
                 dist = _edit_distance(mapped, vocab_word, max_dist=max_allowed)
@@ -180,8 +206,8 @@ class HybridVectorStore:
 
         total_words = 0
         for ch in self.chunks:
-            # Repeat heading to give section titles a strong indexing signal
-            text = f"{ch.get('heading', '')} {ch.get('heading', '')} {ch.get('content', '')}"
+            # Include doc_title and heading to give document and section context strong signals
+            text = f"{ch.get('doc_title', '')} {ch.get('heading', '')} {ch.get('heading', '')} {ch.get('content', '')}"
             tokens = self._tokenize(text)
             counts = Counter(tokens)
             self._cached_counts.append(counts)
@@ -204,7 +230,7 @@ class HybridVectorStore:
             return
 
         for ch in new_chunks:
-            text = f"{ch.get('heading', '')} {ch.get('heading', '')} {ch.get('content', '')}"
+            text = f"{ch.get('doc_title', '')} {ch.get('heading', '')} {ch.get('heading', '')} {ch.get('content', '')}"
             tokens = self._tokenize(text)
             counts = Counter(tokens)
             self._cached_counts.append(counts)
@@ -249,6 +275,7 @@ class HybridVectorStore:
         Return up to top_k chunks ranked by combined BM25 + cosine score.
         Doc tokens and lengths are read from memory caches, executing in microsecond times.
         Query tokens are normalized with typo tolerance and synonym expansion.
+        Overview queries (e.g. 'what is this paper about') receive anchor expansion and abstract boosts.
         """
         if not self.chunks or not query.strip():
             return []
@@ -257,7 +284,15 @@ class HybridVectorStore:
         if not query_tokens:
             return []
 
-        query_counts = Counter(query_tokens)
+        is_overview = is_overview_query(query)
+        effective_tokens = list(query_tokens)
+        if is_overview:
+            # Expand with document summary anchor terms present in the vocabulary
+            for anchor in OVERVIEW_ANCHOR_TERMS:
+                if anchor in self.vocabulary and anchor not in effective_tokens:
+                    effective_tokens.append(anchor)
+
+        query_counts = Counter(effective_tokens)
         query_vec: Dict[str, float] = {}
         norm_sq = 0.0
         for term, count in query_counts.items():
@@ -284,7 +319,7 @@ class HybridVectorStore:
 
             # BM25
             bm25_raw = 0.0
-            for q_term in query_tokens:
+            for q_term in effective_tokens:
                 if q_term in doc_counts:
                     tf = doc_counts[q_term]
                     idf_val = max(0.1, self.idf.get(q_term, 0.1))
@@ -294,7 +329,24 @@ class HybridVectorStore:
 
             bm25_norm = bm25_raw / (bm25_raw + BM25_NORM_K) if bm25_raw > 0 else 0.0
             combined = (self.vector_weight * cos_sim) + ((1.0 - self.vector_weight) * bm25_norm)
-            overlap = sum(1 for q in query_tokens if q in doc_counts)
+            overlap = sum(1 for q in effective_tokens if q in doc_counts)
+
+            # Overview intent adjustments
+            if is_overview:
+                content_lower = ch.get("content", "").lower()
+                heading_lower = ch.get("heading", "").lower()
+                is_intro = (
+                    ch.get("chunk_index", 999) <= 3 or
+                    "abstract" in heading_lower or
+                    "abstract" in content_lower or
+                    "introduction" in heading_lower or
+                    "we propose" in content_lower or
+                    "in this work" in content_lower
+                )
+                if is_intro:
+                    combined *= 1.45
+                if "permission to reproduce" in content_lower or "all rights reserved" in content_lower:
+                    combined *= 0.25
 
             if combined >= threshold and overlap > 0:
                 results.append({

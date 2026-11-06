@@ -21,7 +21,28 @@ import {
   loadSampleDocs,
 } from './services/api';
 
+const SESSION_STORAGE_KEY = 'docassist_chat_session_v2';
+const TWO_HOURS_MS = 2 * 60 * 60 * 1000;
+
+function getStoredSession() {
+  try {
+    const raw = localStorage.getItem(SESSION_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || !parsed.expiresAt) return null;
+    if (Date.now() > parsed.expiresAt) {
+      localStorage.removeItem(SESSION_STORAGE_KEY);
+      return null;
+    }
+    return parsed;
+  } catch (e) {
+    return null;
+  }
+}
+
 export default function App() {
+  const storedSession = getStoredSession();
+
   const [activeTab, setActiveTab] = useState('qa');
   const [health, setHealth] = useState(null);
   const [documents, setDocuments] = useState([]);
@@ -29,9 +50,13 @@ export default function App() {
   const [selectedDocIdForChunks, setSelectedDocIdForChunks] = useState(null);
   const [history, setHistory] = useState([]);
 
+  // Chat conversation state (restored from 2-hour session storage)
+  const [messages, setMessages] = useState(() => storedSession?.messages || []);
+  const [sessionExpiresAt, setSessionExpiresAt] = useState(() => storedSession?.expiresAt || null);
+
   // Query and parameters state
-  const [scopeDocId, setScopeDocId] = useState(null);
-  const [threshold, setThreshold] = useState(0.2);
+  const [scopeDocId, setScopeDocId] = useState(() => storedSession?.scopeDocId ?? null);
+  const [threshold, setThreshold] = useState(() => storedSession?.threshold ?? 0.2);
   const [topK, setTopK] = useState(3);
   const [groqModel, setGroqModel] = useState('llama-3.3-70b-versatile');
   const [groqKey, setGroqKey] = useState(() => localStorage.getItem('groq_api_key') || '');
@@ -105,6 +130,33 @@ export default function App() {
     }
   };
 
+  // Auto-persist conversation to 2-Hour Local Session Storage
+  useEffect(() => {
+    if (messages.length > 0) {
+      let expiresAt = sessionExpiresAt;
+      if (!expiresAt || expiresAt < Date.now()) {
+        expiresAt = Date.now() + TWO_HOURS_MS;
+        setSessionExpiresAt(expiresAt);
+      }
+      const sessionData = {
+        messages,
+        scopeDocId,
+        threshold,
+        expiresAt,
+        updatedAt: Date.now(),
+      };
+      localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(sessionData));
+    }
+  }, [messages, scopeDocId, threshold, sessionExpiresAt]);
+
+  const handleClearChat = () => {
+    localStorage.removeItem(SESSION_STORAGE_KEY);
+    setMessages([]);
+    setSessionExpiresAt(null);
+    setQueryResult(null);
+    showToast('Chat conversation cleared.', 'info');
+  };
+
   const handleRunQuery = async (queryText) => {
     setLoadingQuery(true);
     try {
@@ -119,6 +171,14 @@ export default function App() {
 
       if (resp?.result) {
         setQueryResult(resp.result);
+        const newMsg = {
+          id: Date.now(),
+          query: queryText,
+          result: resp.result,
+          timestamp: new Date().toISOString(),
+        };
+        setMessages((prev) => [...prev, newMsg]);
+
         // Refresh audit logs
         fetchHistory(20).then((res) => {
           if (res?.history) setHistory(res.history);
@@ -223,8 +283,10 @@ export default function App() {
               sensitivityThreshold={threshold}
               groqKey={groqKey}
               onRunQuery={handleRunQuery}
-              queryResult={queryResult}
               loading={loadingQuery}
+              messages={messages}
+              sessionExpiresAt={sessionExpiresAt}
+              onClearChat={handleClearChat}
             />
           )}
 

@@ -161,11 +161,13 @@ def get_document(doc_id: int) -> Optional[Dict[str, Any]]:
 
 
 def get_document_chunks(doc_id: int) -> List[Dict[str, Any]]:
-    """Fetch chunks belonging to a specific document ordered by index."""
+    """Fetch chunks belonging to a specific document ordered by index with document title."""
     with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute(
-            "SELECT * FROM chunks WHERE document_id = ? ORDER BY chunk_index ASC",
+            """SELECT c.*, d.title AS doc_title, d.filename
+               FROM chunks c JOIN documents d ON c.document_id = d.id
+               WHERE c.document_id = ? ORDER BY c.chunk_index ASC""",
             (doc_id,)
         )
         return [dict(row) for row in cursor.fetchall()]
