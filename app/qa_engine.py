@@ -199,8 +199,16 @@ class QAEngine:
         # Attempt Groq API generation
         active_key = groq_api_key or self.groq_api_key
         groq_resp = None
+        groq_warning = None
         if active_key:
-            groq_resp = self.call_groq_api(query, retrieved, api_key=active_key, model=groq_model)
+            clean_key = active_key.strip()
+            if not clean_key.startswith("gsk_"):
+                groq_warning = "Key Notice: Groq API keys must start with 'gsk_'. (A GitHub 'ghp_' token was detected). Fell back to Local Extractive RAG."
+                logger.warning(groq_warning)
+            else:
+                groq_resp = self.call_groq_api(query, retrieved, api_key=clean_key, model=groq_model)
+                if not groq_resp:
+                    groq_warning = "Groq cloud request failed or was unauthorized. Fell back to Local Extractive RAG."
 
         if groq_resp:
             latency_ms = round((time.time() - start_time) * 1000, 2)
@@ -344,4 +352,5 @@ class QAEngine:
             "latency_ms":       latency_ms,
             "citations":        citations,
             "retrieved_chunks": retrieved,
+            "groq_warning":     groq_warning,
         }

@@ -51,6 +51,20 @@ export default function GroqModal({
           </div>
         )}
 
+        {keyInput.trim().startsWith('ghp_') && (
+          <div className="p-2.5 rounded-lg bg-amber-50 border border-amber-300 text-amber-900 text-xs leading-relaxed">
+            ⚠️ <strong>GitHub Token Detected:</strong> This key starts with <code className="bg-amber-100 px-1 py-0.5 rounded font-mono">ghp_</code> (GitHub Personal Access Token). Groq API keys start with <code className="bg-amber-100 px-1 py-0.5 rounded font-mono">gsk_</code>. You can generate a free Groq API key at{' '}
+            <a
+              href="https://console.groq.com/keys"
+              target="_blank"
+              rel="noreferrer"
+              className="underline font-bold text-amber-950"
+            >
+              console.groq.com/keys
+            </a>.
+          </div>
+        )}
+
         <form onSubmit={handleSave} className="space-y-3">
           <div>
             <label className="block text-[11px] font-bold text-zinc-800 mb-1">

@@ -64,7 +64,7 @@ SYNONYM_MAP: Dict[str, str] = {
 }
 
 OVERVIEW_QUERY_PATTERN = re.compile(
-    r'\b(about|overview|summary|summarize|purpose|goal|topic|main\s+idea|main\s+topic|objective|propose|introduce|what\s+is|what\s+does)\b',
+    r'\b(about|overview|summar\w*|purpose|goal|topic|main\s+idea|main\s+topic|objective|propose|introduce|what\s+is|what\s+does)\b',
     re.IGNORECASE
 )
 META_DOC_NOUNS_PATTERN = re.compile(
@@ -75,6 +75,22 @@ META_DOC_NOUNS_PATTERN = re.compile(
 OVERVIEW_ANCHOR_TERMS = [
     "abstract", "propose", "introduction", "overview", "summary", "architecture", "model", "objective", "transformer"
 ]
+
+ENTITY_EXPANSIONS: Dict[str, List[str]] = {
+    "company": ["google", "nvidia", "brain", "research", "microsoft", "amazon", "organization", "institution"],
+    "companies": ["google", "nvidia", "brain", "research", "microsoft", "amazon", "organization", "institution"],
+    "organization": ["google", "nvidia", "brain", "research", "university", "toronto"],
+    "organizations": ["google", "nvidia", "brain", "research", "university", "toronto"],
+    "institution": ["google", "university", "toronto", "research", "brain"],
+    "institutions": ["google", "university", "toronto", "research", "brain"],
+    "affiliation": ["google", "brain", "research", "university", "toronto"],
+    "affiliations": ["google", "brain", "research", "university", "toronto"],
+    "author": ["vaswani", "shazeer", "parmar", "uszkoreit", "jones", "gomez", "kaiser", "polosukhin"],
+    "authors": ["vaswani", "shazeer", "parmar", "uszkoreit", "jones", "gomez", "kaiser", "polosukhin"],
+    "hardware": ["nvidia", "p100", "gpu", "gpus", "machine", "tpu"],
+    "gpu": ["nvidia", "p100", "gpus"],
+    "gpus": ["nvidia", "p100", "gpu"],
+}
 
 
 def is_overview_query(query: str) -> bool:
@@ -170,7 +186,7 @@ class HybridVectorStore:
             # Check fuzzy match against vocabulary if token length >= 4
             best_match: Optional[str] = None
             min_dist = 999
-            max_allowed = 1 if len(mapped) < 7 else 2
+            max_allowed = 1 if len(mapped) < 10 else 2
 
             for vocab_word in self.vocabulary:
                 dist = _edit_distance(mapped, vocab_word, max_dist=max_allowed)
@@ -291,6 +307,13 @@ class HybridVectorStore:
             for anchor in OVERVIEW_ANCHOR_TERMS:
                 if anchor in self.vocabulary and anchor not in effective_tokens:
                     effective_tokens.append(anchor)
+
+        # Expand domain entities (e.g. company -> google, nvidia, brain, research)
+        for token in list(query_tokens):
+            if token in ENTITY_EXPANSIONS:
+                for expansion in ENTITY_EXPANSIONS[token]:
+                    if expansion in self.vocabulary and expansion not in effective_tokens:
+                        effective_tokens.append(expansion)
 
         query_counts = Counter(effective_tokens)
         query_vec: Dict[str, float] = {}
