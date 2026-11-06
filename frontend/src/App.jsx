@@ -133,7 +133,7 @@ export default function App() {
 
   const handleUploadText = async (title, content) => {
     const res = await uploadTextDocument(title, content);
-    showToast(`"${res.title}" indexed successfully with ${res.total_chunks} chunks.`, 'success');
+    showToast(`"${res.title}" indexed with ${res.total_chunks} chunks.`, 'success');
     await loadInitialData();
   };
 
@@ -193,7 +193,7 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col font-sans">
+    <div className="min-h-screen bg-zinc-50 text-zinc-900 flex flex-col font-sans">
       {/* Top Navigation */}
       <Navbar
         health={health}
@@ -291,16 +291,8 @@ export default function App() {
 
       {/* Floating Toast Notification */}
       {toast && (
-        <div className="fixed bottom-4 right-4 z-50">
-          <div
-            className={`px-3.5 py-2 rounded-lg text-xs font-medium border shadow-lg flex items-center gap-2 ${
-              toast.type === 'error'
-                ? 'bg-rose-950/90 text-rose-200 border-rose-800'
-                : toast.type === 'success'
-                ? 'bg-emerald-950/90 text-emerald-200 border-emerald-800'
-                : 'bg-zinc-900 text-zinc-200 border-zinc-700'
-            }`}
-          >
+        <div className="fixed bottom-5 right-5 z-50">
+          <div className="px-4 py-2.5 rounded-lg text-xs font-semibold bg-zinc-950 text-white border border-zinc-800 shadow-xl flex items-center gap-2">
             <span>{toast.message}</span>
           </div>
         </div>
@@ -308,4 +300,3 @@ export default function App() {
     </div>
   );
 }
-
