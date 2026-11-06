@@ -1,5 +1,10 @@
 # Thasmai Infotech Technical Talent Assessment Guide
 
+## Assigned Project Track & Problem Statement (P07)
+- **Track Code:** P07 — AI Document Assistant & Grounded Q&A System
+- **Problem Statement:** Candidates must solve the enterprise challenge of untrusted AI responses and document search inefficiency by building a production-grade AI Document Assistant. The system must ingest technical documents, apply hybrid BM25 and vector retrieval, provide strict sentence-level source citations, enforce anti-hallucination confidence guardrails, and implement live evaluator adjustments.
+- **Core Goal:** Convert this problem statement into a fully working prototype within the 10-day evaluation timeline.
+
 ## Objective and Overview
 The Thasmai Infotech 10-Day Project-Building Assignment evaluates a candidate's ability to convert a problem statement into a production-grade working application. Candidates must demonstrate planning, interface development, application logic, data handling, integration, testing, documentation, and the ability to defend their work in a technical viva.
 

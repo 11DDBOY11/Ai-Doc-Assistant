@@ -204,7 +204,11 @@ async def upload_file(
     doc_title = title.strip() if title else os.path.splitext(file.filename)[0].replace("_", " ").title()
     ext = os.path.splitext(file.filename)[1].lower()
 
-    content = content_bytes.decode("utf-8", errors="ignore")
+    try:
+        content = processor.extract_text(file_bytes=content_bytes, filename=file.filename)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Failed to extract text from file: {exc}")
+
     if not content.strip():
         raise HTTPException(status_code=400, detail="Uploaded file contains no readable text.")
 
@@ -309,18 +313,27 @@ def load_sample_docs():
     sample_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "sample_docs")
     loaded = []
     if os.path.exists(sample_dir):
+        # Prevent duplicate sample document instances
+        existing_docs = {d["filename"]: d["id"] for d in db.get_all_documents()}
         for f in sorted(os.listdir(sample_dir)):
-            if f.endswith((".md", ".txt")):
+            if f.endswith((".md", ".txt", ".docx")):
                 path = os.path.join(sample_dir, f)
+                ext = os.path.splitext(f)[1].lower()
                 title = os.path.splitext(f)[0].replace("_", " ").title()
-                with open(path, "r", encoding="utf-8") as fp:
-                    content = fp.read()
+
+                content = processor.extract_text(file_path=path, filename=f)
+                if not content.strip():
+                    continue
+
+                if f in existing_docs:
+                    db.delete_document(existing_docs[f])
+
                 chunks = processor.chunk_text(content, default_heading=title)
-                doc_id = db.save_document(title, f, ".md", os.path.getsize(path), create_summary_preview(content))
+                doc_id = db.save_document(title, f, ext, os.path.getsize(path), create_summary_preview(content))
                 saved_chunks = db.save_chunks(doc_id, chunks)
                 for c in saved_chunks:
                     c["doc_title"] = title
                     c["filename"] = f
-                vector_store.add_chunks(saved_chunks)
                 loaded.append(title)
+        refresh_vector_index()
     return {"success": True, "loaded_documents": loaded}

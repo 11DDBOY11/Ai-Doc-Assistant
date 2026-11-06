@@ -112,3 +112,4 @@ export async function loadSampleDocs() {
   if (!res.ok) throw new Error(`Sample docs load failed: ${res.statusText}`);
   return res.json();
 }
+

@@ -219,31 +219,78 @@ class QAEngine:
                 },
             }
 
-        # Deterministic Local Extractive Fallback
-        top_item = retrieved[0]
-        top_chunk = top_item["chunk"]
-        doc_title = top_chunk.get("doc_title", "Document")
-        chunk_idx = top_chunk.get("chunkIndex", top_chunk.get("chunk_index", 0)) + 1
-        heading = top_chunk.get("heading", "Relevant Section")
+        # Deterministic Grounded Local Extractive Synthesizer
+        q_tokens = set(self.vector_store.normalize_query_tokens(query))
+        candidates: List[Dict[str, Any]] = []
 
-        q_words = set(re.findall(r'\b[a-zA-Z0-9]{2,}\b', query.lower())) - STOP_WORDS
-        sentences = re.split(r'(?<=[.!?])\s+', top_chunk.get("content", ""))
+        for rank, item in enumerate(retrieved):
+            ch = item["chunk"]
+            heading = ch.get("heading", "Relevant Section")
+            doc_title = ch.get("doc_title", "Document")
+            chunk_idx = ch.get("chunkIndex", ch.get("chunk_index", 0)) + 1
 
-        ranked = []
-        for sent in sentences:
-            sent_clean = sent.strip()
-            if not sent_clean:
-                continue
-            s_words = set(re.findall(r'\b[a-zA-Z0-9]{2,}\b', sent_clean.lower())) - STOP_WORDS
-            ranked.append((len(q_words & s_words), sent_clean))
+            # Extract distinct statements across lines and sentences
+            content_lines = [l.strip() for l in ch.get("content", "").split("\n") if l.strip()]
+            for line in content_lines:
+                # Remove markdown header syntax
+                line_no_header = re.sub(r'^#{1,6}\s*', '', line).strip()
+                # Split compound sentences if long, otherwise keep line
+                subparts = re.split(r'(?<=[.!?])\s+(?=[A-Z])', line_no_header)
+                for part in subparts:
+                    statement = re.sub(r'^[-*•\d+\.]\s*', '', part).strip()
+                    if len(statement) < 12:
+                        continue
 
-        ranked.sort(key=lambda x: x[0], reverse=True)
-        best = [s for score, s in ranked if score > 0][:3]
-        if not best and sentences:
-            best = sentences[:2]
+                    words = set(re.findall(r'\b[a-zA-Z0-9]{2,}\b', statement.lower()))
+                    overlap = len(q_tokens & words)
+                    h_words = set(re.findall(r'\b[a-zA-Z0-9]{2,}\b', heading.lower()))
+                    h_overlap = len(q_tokens & h_words)
 
-        answer = " ".join(best) + f"\n\n[Source: {doc_title} | Section: {heading} (Chunk #{chunk_idx})]"
-        confidence = min(CONF_LOCAL_MAX, max(CONF_LOCAL_MIN, top_item["score"] * CONF_LOCAL_SCALE))
+                    score = (overlap * 3.0) + (h_overlap * 1.5) + (item["score"] * 2.0) - (rank * 0.3)
+                    if overlap > 0 or h_overlap > 0:
+                        candidates.append({
+                            "text": statement,
+                            "heading": heading,
+                            "doc_title": doc_title,
+                            "chunk_idx": chunk_idx,
+                            "score": score,
+                            "overlap": overlap
+                        })
+
+        candidates.sort(key=lambda x: x["score"], reverse=True)
+
+        if candidates:
+            # Deduplicate by starting substring
+            seen: Set[str] = set()
+            selected: List[Dict[str, Any]] = []
+            for c in candidates:
+                key = c["text"][:45].lower()
+                if key not in seen:
+                    seen.add(key)
+                    selected.append(c)
+                if len(selected) >= 3:
+                    break
+
+            primary = selected[0]
+            answer_parts = [primary["text"]]
+
+            if len(selected) > 1:
+                answer_parts.append("\nKey Supporting Details:")
+                for item in selected[1:]:
+                    answer_parts.append(f"- {item['text']}")
+
+            answer_parts.append(f"\n\n[Source: {primary['doc_title']} | Section: {primary['heading']} (Chunk #{primary['chunk_idx']})]")
+            answer = "\n".join(answer_parts)
+            confidence = min(CONF_LOCAL_MAX, max(CONF_LOCAL_MIN, retrieved[0]["score"] * CONF_LOCAL_SCALE))
+        else:
+            top_chunk = retrieved[0]["chunk"]
+            doc_title = top_chunk.get("doc_title", "Document")
+            chunk_idx = top_chunk.get("chunkIndex", top_chunk.get("chunk_index", 0)) + 1
+            heading = top_chunk.get("heading", "Relevant Section")
+            clean_body = re.sub(r'^#{1,6}\s*', '', top_chunk.get("content", "").strip())
+            answer = f"{clean_body[:300]}...\n\n[Source: {doc_title} | Section: {heading} (Chunk #{chunk_idx})]"
+            confidence = CONF_LOCAL_MIN
+
         latency_ms = round((time.time() - start_time) * 1000, 2)
 
         return {

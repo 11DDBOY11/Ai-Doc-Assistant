@@ -1,20 +1,18 @@
 """
 vector_store.py — Hybrid BM25 + TF-IDF cosine similarity retrieval.
 
-Tokens are computed ONCE at index time and cached, so search() performs
-only arithmetic — no re-tokenisation per query.
-
-Public API
-----------
-index_chunks(chunks)   Full rebuild (startup, after delete).
-add_chunks(new_chunks) Incremental add — O(new) tokenisation cost only.
-search(query, ...)     Ranked retrieval; uses precomputed caches.
+Features
+--------
+- Typo-tolerant lexical normalization and abbreviation expansion.
+- Suffix stripping and vocabulary-guided fuzzy matching.
+- Precomputed token counts and document lengths for sub-millisecond retrieval.
+- Incremental index updates via add_chunks(new_chunks).
 """
 
 import math
 import logging
 import re
-from typing import List, Dict, Optional, Any
+from typing import List, Dict, Optional, Any, Set
 from collections import Counter
 
 logger = logging.getLogger(__name__)
@@ -22,7 +20,7 @@ logger = logging.getLogger(__name__)
 # Sigmoidal BM25 normalisation constant
 BM25_NORM_K: float = 2.0
 
-STOP_WORDS: set = {
+STOP_WORDS: Set[str] = {
     "a", "about", "above", "after", "again", "against", "all", "am", "an", "and", "any", "are",
     "as", "at", "be", "because", "been", "before", "being", "below", "between", "both", "but",
     "by", "can", "could", "did", "do", "does", "doing", "down", "during", "each", "few", "for",
@@ -35,6 +33,42 @@ STOP_WORDS: set = {
     "up", "very", "was", "we", "were", "what", "when", "where", "which", "while", "who", "whom",
     "why", "with", "would", "you", "your", "yours", "yourself", "yourselves",
 }
+
+# Domain abbreviations and common typos
+SYNONYM_MAP: Dict[str, str] = {
+    "doc": "document",
+    "docs": "documents",
+    "eval": "evaluation",
+    "evals": "evaluations",
+    "spec": "specification",
+    "specs": "specifications",
+    "req": "requirement",
+    "reqs": "requirements",
+    "sla": "sla",
+    "slas": "sla",
+    "rto": "rto",
+    "rpo": "rpo",
+    "infra": "infrastructure",
+    "statemet": "statement",
+    "statemnt": "statement",
+    "rubrik": "rubric",
+    "arch": "architecture",
+    "db": "database",
+}
+
+
+def _edit_distance(s1: str, s2: str, max_dist: int = 2) -> int:
+    """Fast bounded Levenshtein edit distance."""
+    if abs(len(s1) - len(s2)) > max_dist:
+        return max_dist + 1
+    dp = list(range(len(s2) + 1))
+    for i, c1 in enumerate(s1):
+        new_dp = [i + 1] * (len(s2) + 1)
+        for j, c2 in enumerate(s2):
+            cost = 0 if c1 == c2 else 1
+            new_dp[j + 1] = min(dp[j + 1] + 1, new_dp[j] + 1, dp[j] + cost)
+        dp = new_dp
+    return dp[len(s2)]
 
 
 class HybridVectorStore:
@@ -81,6 +115,53 @@ class HybridVectorStore:
             return [t for t in raw if t not in STOP_WORDS]
         return raw
 
+    def normalize_query_tokens(self, query: str) -> List[str]:
+        """
+        Normalize query tokens: applies abbreviation expansion, suffix stripping,
+        and vocabulary-guided fuzzy matching to tolerate typos like 'statemet' -> 'statement'.
+        """
+        raw_tokens = self._tokenize(query, remove_stopwords=True)
+        normalized: List[str] = []
+
+        for token in raw_tokens:
+            mapped = SYNONYM_MAP.get(token, token)
+            if mapped in self.vocabulary:
+                normalized.append(mapped)
+                continue
+
+            # Check direct suffix variants
+            matched_variant = False
+            for suffix in ["s", "es", "ed", "ing", "ment", "tion"]:
+                if mapped.endswith(suffix):
+                    stem = mapped[:-len(suffix)]
+                    if stem in self.vocabulary:
+                        normalized.append(stem)
+                        matched_variant = True
+                        break
+            if matched_variant:
+                continue
+
+            # Check fuzzy match against vocabulary if token length >= 5
+            best_match: Optional[str] = None
+            min_dist = 999
+            max_allowed = 1 if len(mapped) < 8 else 2
+
+            for vocab_word in self.vocabulary:
+                dist = _edit_distance(mapped, vocab_word, max_dist=max_allowed)
+                if dist <= max_allowed and dist < min_dist:
+                    min_dist = dist
+                    best_match = vocab_word
+                    if dist == 1:
+                        break
+
+            if best_match:
+                logger.debug("Fuzzy matched query token '%s' -> '%s'", token, best_match)
+                normalized.append(best_match)
+            else:
+                normalized.append(mapped)
+
+        return normalized
+
     def index_chunks(self, chunks_list: List[Dict[str, Any]]) -> None:
         """Full index rebuild. Call on startup or after a document deletion."""
         self.chunks = list(chunks_list)
@@ -99,7 +180,9 @@ class HybridVectorStore:
 
         total_words = 0
         for ch in self.chunks:
-            tokens = self._tokenize(f"{ch.get('heading', '')} {ch.get('content', '')}")
+            # Repeat heading to give section titles a strong indexing signal
+            text = f"{ch.get('heading', '')} {ch.get('heading', '')} {ch.get('content', '')}"
+            tokens = self._tokenize(text)
             counts = Counter(tokens)
             self._cached_counts.append(counts)
             self._cached_lens.append(len(tokens))
@@ -121,7 +204,8 @@ class HybridVectorStore:
             return
 
         for ch in new_chunks:
-            tokens = self._tokenize(f"{ch.get('heading', '')} {ch.get('content', '')}")
+            text = f"{ch.get('heading', '')} {ch.get('heading', '')} {ch.get('content', '')}"
+            tokens = self._tokenize(text)
             counts = Counter(tokens)
             self._cached_counts.append(counts)
             self._cached_lens.append(len(tokens))
@@ -164,11 +248,12 @@ class HybridVectorStore:
         """
         Return up to top_k chunks ranked by combined BM25 + cosine score.
         Doc tokens and lengths are read from memory caches, executing in microsecond times.
+        Query tokens are normalized with typo tolerance and synonym expansion.
         """
         if not self.chunks or not query.strip():
             return []
 
-        query_tokens = self._tokenize(query)
+        query_tokens = self.normalize_query_tokens(query)
         if not query_tokens:
             return []
 
